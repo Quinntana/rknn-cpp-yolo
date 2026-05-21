@@ -11,15 +11,28 @@ endif()
 
 project ("rknn")
 
+# ==========================================
+# Qt Configuration
+# ==========================================
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+find_package(Qt5 COMPONENTS Widgets REQUIRED)
+
+# ==========================================
+# Existing Dependencies
+# ==========================================
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_library(RGA_LIBRARY NAMES rga)
 find_package(OpenMP REQUIRED)
-
 find_package(TBB REQUIRED) # 添加对 libtbb 库的依赖
-# 将源代码添加到此项目的可执行文件。
 
-file(GLOB SOURCES "src/*.cpp" "rknn.cpp")
+# ==========================================
+# Source Files
+# ==========================================
+# Removed "rknn.cpp" and added "main.cpp" for the Qt GUI integration
+file(GLOB SOURCES "src/*.cpp" "main.cpp")
 
 add_executable (rknn ${SOURCES})
 
@@ -43,7 +56,6 @@ else()
     message(WARNING "OpenMP not found, compiling without OpenMP.")
 endif()
 
-# 链接 /usr/lib 中的库
 # 查找库文件
 find_library(RKNN_API_LIBRARY NAMES rknnrt PATHS /usr/lib)
 
@@ -54,14 +66,15 @@ else()
     message(FATAL_ERROR "Could not find librknnrt.so")
 endif()
 
-# TODO: 如有需要，请添加测试并安装目标。
-# 链接库
+# ==========================================
+# Link Libraries
+# ==========================================
 target_link_libraries(rknn
     ${OpenCV_LIBS}
     TBB::tbb
     ${RGA_LIBRARY}
+    Qt5::Widgets  # Added Qt5 Widgets library
 )
-# sudo apt-get install libtbb-dev
 
 # 设置 C++ 编译选项以启用 O3 优化
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")

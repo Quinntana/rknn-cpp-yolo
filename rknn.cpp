@@ -9,7 +9,7 @@
 
 int main() {
     // 初始化模型
-    std::string model_path = "yolo11s.rknn"; // yolov9c.rknn
+    std::string model_path = "yolo11n.rknn"; // yolov9c.rknn
     rknn_model model(model_path);
 
     int ctx_index = 0; // 使用第一个上下文
