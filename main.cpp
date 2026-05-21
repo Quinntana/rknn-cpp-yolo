@@ -1,7 +1,3 @@
-// PUT THIS FIRST
-#include "rknn_model.h"
-
-// THEN put your Qt and other includes
 #include <QApplication>
 #include <QWidget>
 #include <QPushButton>
@@ -15,7 +11,8 @@
 #include <iomanip>
 #include <opencv2/opencv.hpp>
 
-// ... rest of your code ...
+// Include the RKNN model header from the backend
+#include "rknn_model.h"
 
 // ==========================================
 // 1. THE AI MODULE (RKNN NPU Backend)
@@ -29,8 +26,8 @@ public:
     AIEngine(const std::string& modelPath) {
         // Initialize the RKNN model
         model = new rknn_model(modelPath);
-        ctx_index = 0; // Defaulting to the first NPU context
-        std::cout << ">> AI Engine Initialized (RKNN NPU Mode)." << std::endl;
+        ctx_index = 0; // Defaulting to the first NPU core context
+        std::cout << ">> AI Engine Initialized (6 TOPS Hardware NPU Active)." << std::endl;
     }
 
     ~AIEngine() {
@@ -38,17 +35,18 @@ public:
     }
 
     double processImage(const std::string& inputPath, const std::string& outputPath) {
+        // Load image natively (OpenCV keeps this in BGR layout)
         cv::Mat image = cv::imread(inputPath);
         if (image.empty()) return 0.0;
 
-        // Convert BGR to RGB for RKNN
-        cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-
+        // FIXED: Removed cv::cvtColor(..., COLOR_BGR2RGB).
+        // The RGA hardware driver and adaptive_letterbox expect native BGR.
+        
         double start_time = cv::getTickCount();
 
         object_detect_result_list od_results;
         
-        // Note: run_inference will modify 'image' (cropping/aligning) internally
+        // Execute hardware accelerated inference loop
         int ret = model->run_inference(image, ctx_index, &od_results);
 
         double end_time = cv::getTickCount();
@@ -58,32 +56,47 @@ public:
             return 0.0;
         }
 
-        // Convert back to BGR for drawing and saving colors correctly
-        cv::Mat image_bgr = image.clone();
-        cv::cvtColor(image_bgr, image_bgr, cv::COLOR_RGB2BGR);
+        // FIXED: Removed redundant .clone() and reverse color space conversions.
+        // 'image' has been efficiently updated/cropped by the backend alignment engine.
+        // We draw directly on the existing matrix memory space.
 
-        // Draw bounding boxes based on RKNN output
+        // Draw bounding boxes based on RKNN outputs
         for (int i = 0; i < od_results.count; ++i) {
             object_detect_result result = od_results.results[i];
 
-            cv::Rect rect(result.box.left, result.box.top, 
-                          result.box.right - result.box.left, 
-                          result.box.bottom - result.box.top);
-            cv::rectangle(image_bgr, rect, cv::Scalar(0, 255, 0), 2); // Green box
+            // Constrain bounding coordinates safely inside the image dimensions
+            int x1 = std::max(0, result.box.left);
+            int y1 = std::max(0, result.box.top);
+            int x2 = std::min(image.cols, result.box.right);
+            int y2 = std::min(image.rows, result.box.bottom);
+            int width = x2 - x1;
+            int height = y2 - y1;
 
-            // Add text labels
+            if (width <= 0 || height <= 0) continue;
+
+            cv::Rect rect(x1, y1, width, height);
+            cv::rectangle(image, rect, cv::Scalar(0, 255, 0), 2); // Green Box
+
+            // Render text dynamic metadata labels safely above the boundaries
             std::ostringstream label;
-            label << "ID: " << result.cls_id << " Conf: " << std::fixed << std::setprecision(2) << result.prop;
+            label << "Class: " << result.cls_id << " Conf: " << std::fixed << std::setprecision(2) << result.prop;
+            
             int baseLine = 0;
-            cv::Size label_size = cv::getTextSize(label.str(), cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
-            cv::rectangle(image_bgr, cv::Point(result.box.left, result.box.top - label_size.height),
-                          cv::Point(result.box.left + label_size.width, result.box.top + baseLine),
+            cv::Size label_size = cv::getTextSize(label.str(), cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &baseLine);
+            
+            // Prevent drawing the text background box outside the top image bounds
+            int label_y = std::max(y1, label_size.height + 5);
+            
+            cv::rectangle(image, cv::Point(x1, label_y - label_size.height - 2),
+                          cv::Point(x1 + label_size.width, label_y + baseLine),
                           cv::Scalar(0, 255, 0), -1);
-            cv::putText(image_bgr, label.str(), cv::Point(result.box.left, result.box.top),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+                          
+            cv::putText(image, label.str(), cv::Point(x1, label_y - 2),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
         }
 
-        cv::imwrite(outputPath, image_bgr);
+        // Save output image directly to disk
+        cv::imwrite(outputPath, image);
 
         return ((end_time - start_time) / cv::getTickFrequency()) * 1000.0;
     }
@@ -101,17 +114,17 @@ private:
 
 public:
     MainWindow(AIEngine* engine) : aiEngine(engine) {
-        setWindowTitle("RKNN Bulk Processor");
+        setWindowTitle("RKNN Bulk Processor Dashboard");
         resize(500, 250);
 
         QVBoxLayout* layout = new QVBoxLayout(this);
         
         btnBulkProcess = new QPushButton("Select Images for Bulk Processing");
-        btnBulkProcess->setStyleSheet("padding: 10px; font-weight: bold;");
+        btnBulkProcess->setStyleSheet("padding: 12px; font-weight: bold; font-size: 13px;");
         
         statusLabel = new QLabel("System Ready. Waiting for images...");
         statsLabel = new QLabel("Total Time: 0 ms | Avg Time/Image: 0 ms");
-        statsLabel->setStyleSheet("color: blue; font-weight: bold;");
+        statsLabel->setStyleSheet("color: #2980b9; font-weight: bold; font-size: 12px;");
 
         layout->addWidget(btnBulkProcess);
         layout->addWidget(statusLabel);
@@ -146,18 +159,17 @@ private:
 
             processedCount++;
 
+            // Throttling updates to the UI every 10 images keeps the main event thread light
             if (processedCount % 10 == 0 || processedCount == totalImages) {
                 statusLabel->setText(QString("Processing %1 of %2...").arg(processedCount).arg(totalImages));
                 QCoreApplication::processEvents(); 
             }
-            
-            QCoreApplication::processEvents(); 
 
             double timeTaken = aiEngine->processImage(inputPath, outputPath);
             totalTimeMs += timeTaken;
         }
 
-        double avgTime = totalTimeMs / processedCount;
+        double avgTime = (processedCount > 0) ? (totalTimeMs / processedCount) : 0.0;
         
         statusLabel->setText(QString("Finished! Saved to folder: %1").arg(folderName));
         statsLabel->setText(QString("Total Time: %1 ms | Avg Time/Image: %2 ms")
@@ -174,8 +186,8 @@ private:
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
-    // Initialize the RKNN Engine (Ensure the correct model path)
-    AIEngine engine("yolo11n.rknn"); //
+    // Initialize the RKNN Engine with your converted weights
+    AIEngine engine("yolo11n.rknn"); 
 
     MainWindow window(&engine);
     window.show();
