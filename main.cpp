@@ -31,7 +31,6 @@ private:
 
 public:
     AIEngine(const std::string& modelPath) {
-        // Initialize the RKNN model
         model = new rknn_model(modelPath);
         ctx_index = 0; // Defaulting to the first NPU core context
         std::cout << ">> AI Engine Initialized (6 TOPS Hardware NPU Active)." << std::endl;
@@ -42,7 +41,6 @@ public:
     }
 
     double processImage(const std::string& inputPath, const std::string& outputPath) {
-        // Load image natively (OpenCV keeps this in BGR layout)
         cv::Mat image = cv::imread(inputPath);
         if (image.empty()) return 0.0;
         
@@ -60,11 +58,10 @@ public:
             return 0.0;
         }
 
-        // Draw bounding boxes based on RKNN outputs
+        // Draw bounding boxes efficiently using direct scalar overlays
         for (int i = 0; i < od_results.count; ++i) {
-            object_detect_result result = od_results.results[i];
+            const auto& result = od_results.results[i];
 
-            // Constrain bounding coordinates safely inside the image dimensions
             int x1 = std::max(0, result.box.left);
             int y1 = std::max(0, result.box.top);
             int x2 = std::min(image.cols, result.box.right);
@@ -74,28 +71,16 @@ public:
 
             if (width <= 0 || height <= 0) continue;
 
-            cv::Rect rect(x1, y1, width, height);
-            cv::rectangle(image, rect, cv::Scalar(0, 255, 0), 2); // Green Box
-
-            // Render text dynamic metadata labels safely above the boundaries
-            std::ostringstream label;
-            label << "Class: " << result.cls_id << " Conf: " << std::fixed << std::setprecision(2) << result.prop;
+            // Draw only the structural bounding rectangle
+            cv::rectangle(image, cv::Rect(x1, y1, width, height), cv::Scalar(0, 255, 0), 2);
             
-            int baseLine = 0;
-            cv::Size label_size = cv::getTextSize(label.str(), cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &baseLine);
-            
-            // Prevent drawing the text background box outside the top image bounds
-            int label_y = std::max(y1, label_size.height + 5);
-            
-            cv::rectangle(image, cv::Point(x1, label_y - label_size.height - 2),
-                          cv::Point(x1 + label_size.width, label_y + baseLine),
-                          cv::Scalar(0, 255, 0), -1);
-                          
-            cv::putText(image, label.str(), cv::Point(x1, label_y - 2),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+            // OPTIMIZATION: Bypassed heavy cv::getTextSize font math to minimize processing overhead.
+            // Directly overlay basic numerical IDs directly above the bounds.
+            std::string text_label = "ID:" + std::to_string(result.cls_id) + " P:" + std::to_string(static_cast<int>(result.prop * 100));
+            cv::putText(image, text_label, cv::Point(x1, std::max(y1 - 4, 12)),
+                        cv::FONT_HERSHEY_PLAIN, 0.8, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
         }
 
-        // Save output image directly to disk
         cv::imwrite(outputPath, image);
 
         return ((end_time - start_time) / cv::getTickFrequency()) * 1000.0;
@@ -149,7 +134,12 @@ private:
         int processedCount = 0;
         double totalTimeMs = 0.0;
 
+        // Freeze the UI entirely before entering the core processing pipeline
         btnBulkProcess->setEnabled(false); 
+        statusLabel->setText(QString("Inference in progress... Processing %1 files.").arg(totalImages));
+        
+        // Force a single initial repaint so the user sees the freeze notice
+        QCoreApplication::processEvents(); 
 
         for (const QString& qFilePath : fileNames) {
             std::string inputPath = qFilePath.toStdString();
@@ -159,11 +149,8 @@ private:
 
             processedCount++;
 
-            // Throttling updates to the UI every 10 images keeps the main event thread light
-            if (processedCount % 10 == 0 || processedCount == totalImages) {
-                statusLabel->setText(QString("Processing %1 of %2...").arg(processedCount).arg(totalImages));
-                QCoreApplication::processEvents(); 
-            }
+            // OPTIMIZATION: Completely removed QCoreApplication::processEvents() from here.
+            // This prevents Qt from yielding CPU execution control back to the window manager mid-run.
 
             double timeTaken = aiEngine->processImage(inputPath, outputPath);
             totalTimeMs += timeTaken;
@@ -171,6 +158,7 @@ private:
 
         double avgTime = (processedCount > 0) ? (totalTimeMs / processedCount) : 0.0;
         
+        // Re-enable and paint updates once calculations are complete
         statusLabel->setText(QString("Finished! Saved to folder: %1").arg(folderName));
         statsLabel->setText(QString("Total Time: %1 ms | Avg Time/Image: %2 ms")
                                 .arg(totalTimeMs, 0, 'f', 2)
@@ -181,12 +169,11 @@ private:
 };
 
 // ==========================================
-// 5. MAIN APPLICATION ENTRY POINT
+// 3. MAIN APPLICATION ENTRY POINT
 // ==========================================
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
-    // Initialize the RKNN Engine with your converted weights
     AIEngine engine("yolo11n.rknn"); 
 
     MainWindow window(&engine);
