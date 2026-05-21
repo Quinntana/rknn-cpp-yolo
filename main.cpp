@@ -1,3 +1,7 @@
+// PUT THIS FIRST
+#include "rknn_model.h"
+
+// THEN put your Qt and other includes
 #include <QApplication>
 #include <QWidget>
 #include <QPushButton>
@@ -11,8 +15,7 @@
 #include <iomanip>
 #include <opencv2/opencv.hpp>
 
-// Include the RKNN model header from the backend
-#include "rknn_model.h"
+// ... rest of your code ...
 
 // ==========================================
 // 1. THE AI MODULE (RKNN NPU Backend)
