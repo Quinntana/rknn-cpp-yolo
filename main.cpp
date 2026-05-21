@@ -1,3 +1,16 @@
+// =========================================================================
+// 1. BACKEND & STANDARD HEADERS FIRST (Prevents Qt 'emit' macro collisions)
+// =========================================================================
+#include <opencv2/opencv.hpp>
+#include <iostream>
+#include <iomanip>
+
+// Include the RKNN model header from the backend before Qt defines 'emit'
+#include "rknn_model.h"
+
+// ==========================================
+// 2. INTERFACE & GUI MODULES (Qt Framework)
+// ==========================================
 #include <QApplication>
 #include <QWidget>
 #include <QPushButton>
@@ -7,15 +20,9 @@
 #include <QDir>
 #include <QDateTime>
 #include <QCoreApplication>
-#include <iostream>
-#include <iomanip>
-#include <opencv2/opencv.hpp>
-
-// Include the RKNN model header from the backend
-#include "rknn_model.h"
 
 // ==========================================
-// 1. THE AI MODULE (RKNN NPU Backend)
+// 3. THE AI MODULE (RKNN NPU Backend Wrapper)
 // ==========================================
 class AIEngine {
 private:
@@ -38,9 +45,6 @@ public:
         // Load image natively (OpenCV keeps this in BGR layout)
         cv::Mat image = cv::imread(inputPath);
         if (image.empty()) return 0.0;
-
-        // FIXED: Removed cv::cvtColor(..., COLOR_BGR2RGB).
-        // The RGA hardware driver and adaptive_letterbox expect native BGR.
         
         double start_time = cv::getTickCount();
 
@@ -55,10 +59,6 @@ public:
             std::cerr << "rknn_run fail! ret=" << ret << std::endl;
             return 0.0;
         }
-
-        // FIXED: Removed redundant .clone() and reverse color space conversions.
-        // 'image' has been efficiently updated/cropped by the backend alignment engine.
-        // We draw directly on the existing matrix memory space.
 
         // Draw bounding boxes based on RKNN outputs
         for (int i = 0; i < od_results.count; ++i) {
@@ -103,7 +103,7 @@ public:
 };
 
 // ==========================================
-// 2. THE GUI MODULE (Separated UI)
+// 4. THE GUI MODULE (Separated UI Dashboard)
 // ==========================================
 class MainWindow : public QWidget {
 private:
@@ -181,7 +181,7 @@ private:
 };
 
 // ==========================================
-// 3. MAIN APPLICATION START
+// 5. MAIN APPLICATION ENTRY POINT
 // ==========================================
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
